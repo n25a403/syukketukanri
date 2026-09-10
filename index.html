@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>科目別 欠席管理アプリ</title>
+    <style>
+        body { font-family: sans-serif; max-width: 750px; margin: 20px auto; padding: 0 15px; line-height: 1.5; background-color: #f8f9fa; }
+        h1, h2 { color: #333; }
+        h1 { font-size: 1.4rem; text-align: center; }
+        h2 { font-size: 1.1rem; margin-top: 0; border-bottom: 2px solid #0d6efd; padding-bottom: 5px; }
+        
+        .card { background: white; padding: 18px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        
+        /* ルール解説 */
+        .rule-box { background-color: #e9ecef; padding: 10px 15px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 15px; }
+
+        /* 科目カードグリッド */
+        .subject-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; margin-top: 10px; }
+        .subject-card { border: 1px solid #dee2e6; border-radius: 6px; padding: 12px; background: #fff; position: relative; }
+        .subject-title { font-weight: bold; font-size: 1.05rem; margin-bottom: 8px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+        .subject-stats { font-size: 0.85rem; color: #495057; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; margin-top: 8px; }
+        .badge-safe { background-color: #d4edda; color: #155724; }
+        .badge-warning { background-color: #fff3cd; color: #856404; }
+        .badge-danger { background-color: #f8d7da; color: #721c24; }
+
+        /* フォーム系 */
+        .form-row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .form-group { flex: 1; margin-bottom: 10px; }
+        label { display: block; margin-bottom: 4px; font-weight: bold; font-size: 0.85rem; }
+        input, select, button { width: 100%; padding: 8px 10px; font-size: 0.95rem; box-sizing: border-box; }
+        button { background-color: #0d6efd; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #0b5ed7; }
+        .btn-add-subject { background-color: #198754; }
+        .btn-add-subject:hover { background-color: #157347; }
+        .btn-del { background-color: #dc3545; color: white; border: none; padding: 3px 6px; border-radius: 3px; cursor: pointer; font-size: 0.75rem; }
+
+        /* テーブル */
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; }
+        th, td { border: 1px solid #dee2e6; padding: 6px 8px; text-align: center; }
+        th { background-color: #f1f3f5; }
+    </style>
+</head>
+<body>
+
+    <h1>科目別 欠席・遅刻管理</h1>
+
+    <div class="rule-box">
+        <strong>【履修ルール】</strong> 各授業とも <strong>3回（コマ）まで欠席可能</strong>（4回以上で不可）。<strong>遅刻 3回 ＝ 欠席 1回</strong> 換算。
+    </div>
+
+    <!-- 1. 科目登録 -->
+    <div class="card">
+        <h2>① 授業（科目）の登録</h2>
+        <div class="form-row">
+            <input type="text" id="newSubjectName" placeholder="例: 英語Ⅰ、プログラミング演習">
+            <button class="btn-add-subject" onclick="addSubject()" style="width: 140px;">科目追加</button>
+        </div>
+    </div>
+
+    <!-- 2. 全科目の状況一覧 -->
+    <div class="card">
+        <h2>② 科目ごとの欠席状況</h2>
+        <div id="subjectList" class="subject-grid">
+            <!-- JSで動的生成 -->
+        </div>
+    </div>
+
+    <!-- 3. 欠席・遅刻の登録 -->
+    <div class="card">
+        <h2>③ 欠席・遅刻の記録</h2>
+        <div class="form-group">
+            <label for="recordSubject">授業名</label>
+            <select id="recordSubject"></select>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="recordDate">日付</label>
+                <input type="date" id="recordDate">
+            </div>
+            <div class="form-group">
+                <label for="recordType">区分</label>
+                <select id="recordType">
+                    <option value="欠席">欠席 (1コマ)</option>
+                    <option value="遅刻">遅刻 (1回)</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="recordNote">メモ</label>
+            <input type="text" id="recordNote" placeholder="例: 体調不良、電車遅延">
+        </div>
+        <button onclick="addRecord()">記録を保存する</button>
+    </div>
+
+    <!-- 4. 履修履歴 -->
+    <div class="card">
+        <h2>④ 登録履歴</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>日付</th>
+                    <th>科目名</th>
+                    <th>区分</th>
+                    <th>メモ</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="recordTable"></tbody>
+        </table>
+    </div>
+
+    <script>
+        document.getElementById('recordDate').valueAsDate = new Date();
+
+        window.onload = function() {
+            renderApp();
+        };
+
+        function getSubjects() {
+            return JSON.parse(localStorage.getItem('subjects_v3')) || ['英語Ⅰ', '数学', '情報処理'];
+        }
+
+        function getRecords() {
+            return JSON.parse(localStorage.getItem('records_v3')) || [];
+        }
+
+        function addSubject() {
+            const input = document.getElementById('newSubjectName');
+            const name = input.value.trim();
+            if (!name) return;
+
+            const subjects = getSubjects();
+            if (subjects.includes(name)) {
+                alert('すでに存在する科目名です。');
+                return;
+            }
+
+            subjects.push(name);
+            localStorage.setItem('subjects_v3', JSON.stringify(subjects));
+            input.value = '';
+            renderApp();
+        }
+
+        function deleteSubject(name) {
+            if (!confirm(`「${name}」と、そのすべての記録を削除しますか？`)) return;
+
+            let subjects = getSubjects().filter(s => s !== name);
+            let records = getRecords().filter(r => r.subject !== name);
+
+            localStorage.setItem('subjects_v3', JSON.stringify(subjects));
+            localStorage.setItem('records_v3', JSON.stringify(records));
+            renderApp();
+        }
+
+        function addRecord() {
+            const subject = document.getElementById('recordSubject').value;
+            const date = document.getElementById('recordDate').value;
+            const type = document.getElementById('recordType').value;
+            const note = document.getElementById('recordNote').value.trim();
+
+            if (!subject) {
+                alert('授業（科目）を選択してください。');
+                return;
+            }
+
+            const records = getRecords();
+            records.push({ id: Date.now(), subject, date, type, note });
+            localStorage.setItem('records_v3', JSON.stringify(records));
+
+            document.getElementById('recordNote').value = '';
+            renderApp();
+        }
+
+        function deleteRecord(id) {
+            let records = getRecords().filter(r => r.id !== id);
+            localStorage.setItem('records_v3', JSON.stringify(records));
+            renderApp();
+        }
+
+        function renderApp() {
+            const subjects = getSubjects();
+            const records = getRecords();
+
+            // 1. 科目セレクトボックスの更新
+            const select = document.getElementById('recordSubject');
+            select.innerHTML = subjects.length ? '' : '<option value="">(科目を追加してください)</option>';
+            subjects.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s;
+                opt.innerText = s;
+                select.appendChild(opt);
+            });
+
+            // 2. 科目カード表示と集計
+            const subjectGrid = document.getElementById('subjectList');
+            subjectGrid.innerHTML = '';
+
+            subjects.forEach(s => {
+                // 科目ごとの集計
+                const subjectRecords = records.filter(r => r.subject === s);
+                let directAbsence = 0;
+                let lates = 0;
+
+                subjectRecords.forEach(r => {
+                    if (r.type === '欠席') directAbsence += 1;
+                    if (r.type === '遅刻') lates += 1;
+                });
+
+                const lateToAbsence = Math.floor(lates / 3);
+                const currentLateRem = lates % 3;
+                const totalAbsence = directAbsence + lateToAbsence;
+                const remaining = 3 - totalAbsence;
+
+                // バッジ判定
+                let badgeClass = 'badge-safe';
+                let badgeText = `あと ${remaining} 回休めます`;
+                if (remaining === 1) {
+                    badgeClass = 'badge-warning';
+                    badgeText = 'あと 1 回（注意）';
+                } else if (remaining <= 0) {
+                    badgeClass = 'badge-danger';
+                    badgeText = remaining === 0 ? '上限（これ以上不可）' : `危険 (超過: ${Math.abs(remaining)}回)`;
+                }
+
+                const card = document.createElement('div');
+                card.className = 'subject-card';
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:start;">
+                        <div class="subject-title">${s}</div>
+                        <button class="btn-del" onclick="deleteSubject('${s}')">削除</button>
+                    </div>
+                    <div class="subject-stats">
+                        換算欠席数: <strong>${totalAbsence}</strong> / 3 回<br>
+                        <span style="font-size:0.8rem; color:#6c757d;">(欠席: ${directAbsence}回, 遅刻: ${lates}回 [端数:${currentLateRem}])</span>
+                    </div>
+                    <span class="badge ${badgeClass}">${badgeText}</span>
+                `;
+                subjectGrid.appendChild(card);
+            });
+
+            // 3. テーブル表示
+            const tbody = document.getElementById('recordTable');
+            tbody.innerHTML = '';
+            records.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            records.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${r.date}</td>
+                    <td><strong>${r.subject}</strong></td>
+                    <td>${r.type}</td>
+                    <td>${r.note || '-'}</td>
+                    <td><button class="btn-del" onclick="deleteRecord(${r.id})">削除</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+    </script>
+</body>
+</html>
