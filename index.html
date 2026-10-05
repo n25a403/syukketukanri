@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>科目別 欠席管理アプリ</title>
+    <title>科目別 欠席・遅刻管理</title>
     <style>
-        body { font-family: sans-serif; max-width: 750px; margin: 20px auto; padding: 0 15px; line-height: 1.5; background-color: #f8f9fa; }
+        body { font-family: sans-serif; max-width: 750px; margin: 20px auto; padding: 0 15px; line-height: 1.5; background-color: #f8f9fa; padding-bottom: 80px; }
         h1, h2 { color: #333; }
         h1 { font-size: 1.4rem; text-align: center; }
         h2 { font-size: 1.1rem; margin-top: 0; border-bottom: 2px solid #0d6efd; padding-bottom: 5px; }
@@ -36,10 +36,48 @@
         .btn-add-subject:hover { background-color: #157347; }
         .btn-del { background-color: #dc3545; color: white; border: none; padding: 3px 6px; border-radius: 3px; cursor: pointer; font-size: 0.75rem; }
 
+        /* バックアップ機能エリア */
+        .backup-area { background-color: #f1f3f5; padding: 12px; border-radius: 6px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+        .backup-btn { background-color: #6c757d; width: auto; padding: 6px 12px; font-size: 0.85rem; }
+        .backup-btn:hover { background-color: #5a6268; }
+
         /* テーブル */
         table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; }
         th, td { border: 1px solid #dee2e6; padding: 6px 8px; text-align: center; }
         th { background-color: #f1f3f5; }
+
+        /* 復元（Undo）通知バー */
+        #toast {
+            visibility: hidden;
+            min-width: 280px;
+            background-color: #323232;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 12px;
+            position: fixed;
+            z-index: 1000;
+            left: 50%;
+            bottom: 30px;
+            transform: translateX(-50%);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+        #toast.show { visibility: visible; }
+        #toast button {
+            background-color: #ffc107;
+            color: #212529;
+            border: none;
+            padding: 4px 10px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            width: auto;
+            margin: 0;
+        }
     </style>
 </head>
 <body>
@@ -62,9 +100,7 @@
     <!-- 2. 全科目の状況一覧 -->
     <div class="card">
         <h2>② 科目ごとの欠席状況</h2>
-        <div id="subjectList" class="subject-grid">
-            <!-- JSで動的生成 -->
-        </div>
+        <div id="subjectList" class="subject-grid"></div>
     </div>
 
     <!-- 3. 欠席・遅刻の登録 -->
@@ -111,8 +147,33 @@
         </table>
     </div>
 
+    <!-- 5. データのバックアップ・復元 -->
+    <div class="card">
+        <h2>⑤ データの書き出し・読み込み</h2>
+        <div class="backup-area">
+            <div>
+                <strong>データの出力:</strong><br>
+                <button class="backup-btn" onclick="exportData()">ファイルを書き出す (JSON)</button>
+            </div>
+            <div>
+                <strong>データの読み込み:</strong><br>
+                <input type="file" id="importFile" accept=".json" onchange="importData(event)" style="font-size: 0.8rem; width: auto;">
+            </div>
+        </div>
+    </div>
+
+    <!-- 削除時の復元通知トースト -->
+    <div id="toast">
+        <span id="toastMsg">削除しました</span>
+        <button onclick="undoDelete()">復元する</button>
+    </div>
+
     <script>
         document.getElementById('recordDate').valueAsDate = new Date();
+
+        // 復元用（Undo）バックアップ変数
+        let lastState = null;
+        let toastTimer = null;
 
         window.onload = function() {
             renderApp();
@@ -124,6 +185,13 @@
 
         function getRecords() {
             return JSON.parse(localStorage.getItem('records_v3')) || [];
+        }
+
+        function saveStateToHistory() {
+            lastState = {
+                subjects: getSubjects(),
+                records: getRecords()
+            };
         }
 
         function addSubject() {
@@ -144,13 +212,15 @@
         }
 
         function deleteSubject(name) {
-            if (!confirm(`「${name}」と、そのすべての記録を削除しますか？`)) return;
+            saveStateToHistory();
 
             let subjects = getSubjects().filter(s => s !== name);
             let records = getRecords().filter(r => r.subject !== name);
 
             localStorage.setItem('subjects_v3', JSON.stringify(subjects));
             localStorage.setItem('records_v3', JSON.stringify(records));
+            
+            showToast(`「${name}」を削除しました`);
             renderApp();
         }
 
@@ -174,11 +244,85 @@
         }
 
         function deleteRecord(id) {
+            saveStateToHistory();
+
             let records = getRecords().filter(r => r.id !== id);
             localStorage.setItem('records_v3', JSON.stringify(records));
+            
+            showToast('記録を削除しました');
             renderApp();
         }
 
+        // --- 削除取り消し (Undo) 機能 ---
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMsg').innerText = msg;
+            toast.className = 'show';
+
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                toast.className = toast.className.replace('show', '');
+            }, 6000); // 6秒間表示
+        }
+
+        function undoDelete() {
+            if (!lastState) return;
+
+            localStorage.setItem('subjects_v3', JSON.stringify(lastState.subjects));
+            localStorage.setItem('records_v3', JSON.stringify(lastState.records));
+            
+            lastState = null;
+            document.getElementById('toast').className = '';
+            renderApp();
+        }
+
+        // --- 書き出し・読み込み (Export/Import) 機能 ---
+        function exportData() {
+            const data = {
+                subjects: getSubjects(),
+                records: getRecords(),
+                exportedAt: new Date().toISOString()
+            };
+
+            const jsonStr = JSON.stringify(data, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `absence_backup_${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.subjects && data.records) {
+                        if (confirm('現在のデータを読み込んだファイルの内容で上書きしますか？')) {
+                            saveStateToHistory();
+                            localStorage.setItem('subjects_v3', JSON.stringify(data.subjects));
+                            localStorage.setItem('records_v3', JSON.stringify(data.records));
+                            renderApp();
+                            showToast('データを復元しました');
+                        }
+                    } else {
+                        alert('無効なバックアップファイル形式です。');
+                    }
+                } catch (err) {
+                    alert('ファイルの読み込みに失敗しました。');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = ''; // リセット
+        }
+
+        // --- 画面描画処理 ---
         function renderApp() {
             const subjects = getSubjects();
             const records = getRecords();
@@ -198,7 +342,6 @@
             subjectGrid.innerHTML = '';
 
             subjects.forEach(s => {
-                // 科目ごとの集計
                 const subjectRecords = records.filter(r => r.subject === s);
                 let directAbsence = 0;
                 let lates = 0;
@@ -213,7 +356,6 @@
                 const totalAbsence = directAbsence + lateToAbsence;
                 const remaining = 3 - totalAbsence;
 
-                // バッジ判定
                 let badgeClass = 'badge-safe';
                 let badgeText = `あと ${remaining} 回休めます`;
                 if (remaining === 1) {
